@@ -1,0 +1,196 @@
+---
+title: "Recessions as Bread & Butter for Forecasters"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+cat("\014")  # clear console
+rm(list=ls(all=TRUE))
+
+```
+
+```{r library, include=FALSE}
+#### (0.1) BASICS: SET LIBRARIES
+library(MASS)
+library(utils)
+library(zoo)
+library(lubridate) # easy handling of dates
+library(stringr) # for "str_extract"-function
+library(forecast)
+library(R.utils) # to use withTimeout
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(readxl)
+library(readr)
+```
+
+```{r path, include=FALSE}
+#path.main <- "/Users/danielwochner/Dropbox/ETH Zurich/Ph.D. Research/Research Projects/BB" # DSW Laptop
+path      <-list()
+path$main <- "C:/BBB/DW_BB4F/" # "C:/Users/BORISS/BBB/ZRH201812/DW_BB4F/"
+path$data <- paste0( path$main, "DATA/")
+path$code <- paste0( path$main, "CODE/")
+
+
+```
+
+```{r option, include=FALSE}
+opt <- list()
+opt$FRED_VNTG <- "2018-12"
+opt$FRED_CSV  <- paste0( opt$FRED_VNTG,".csv" )
+
+### set sample for the balanced data set
+opt$date_beg = c(1960,1) %>% set_names( c("year","quarter") )
+opt$date_end = c(2018,2) %>% set_names( c("year","quarter") )
+
+opt$date_beg_text = sprintf( "%sQ%s", opt$date_beg["year"], opt$date_beg["quarter"] )
+opt$date_end_text = sprintf( "%sQ%s", opt$date_end["year"], opt$date_end["quarter"] )
+
+#opt$FREDXLSX <- "2018-12.xlsx"
+
+```
+
+
+```{r function, include=FALSE}
+# PAPER: McCracken & Ng (2016) (in "TCODE" in Appendix) suggest 7 different variable transformations to make series stationary.
+# I hereby follow their suggestions and apply these rules to apply these transformations to variables in FRED-MD and FRED-QD.
+  
+
+
+```
+
+
+```{r data_init, include=FALSE}
+# Read quarterly FRED database:
+db_init <- tbl_df( read_csv( paste0( path$data, opt$FRED_CSV ) ) ); db_init 
+
+### clean the database: set datestamp
+db_ragged <- db_init %>% 
+                filter( sasdate != "factors") %>% 
+                filter( sasdate != "transform")
+
+#db %>% .$sasdate %>% mdy
+
+db_ragged %<>% mutate( date = mdy(sasdate) ) %>% 
+        separate( ., sasdate, c("month","day","year"), sep = "/" ) %>%
+        dplyr::select( -day ) %>%
+        mutate( month = as.integer( month ) / 3, year = as.integer(year) ) %>%
+        rename( quarter = month ) %>% 
+        dplyr::select(date, year, quarter, everything() )
+
+###### drop variables 
+#( a ) that have NA in 1960Q1 
+#( b ) that have NA in 2018Q3
+#( c ) NONBORRES due to change in definition/structural change
+
+list2remove_NA_BEG = db_ragged %>% 
+                           filter( year == opt$date_beg["year"], quarter == opt$date_beg["quarter"] ) %>% 
+                           select_if( function(x) is.na(x) ) %>% names
+
+list2remove_NA_END = db_ragged %>% 
+                           filter( year == opt$date_end["year"], quarter == opt$date_end["quarter"] ) %>% 
+                           select_if( function(x) is.na(x) ) %>% names
+
+list2remove = union( list2remove_NA_BEG, list2remove_NA_END ) %>% c( . , "NONBORRES" ) %>% unique
+
+### create balanced data set
+db = db_ragged %>% dplyr::select( -list2remove ); dim( db )
+
+names( db )
+
+info.fctr <- db_init %>%  
+           filter( sasdate == "factors") %>% 
+           dplyr::select( -sasdate ) %>%
+           dplyr::select( -list2remove ) 
+
+list.fctr <- info.fctr %>% select_if( function(x) x == 1 )
+
+info.trfm <- db_init  %>% 
+           filter( sasdate == "transform") %>% 
+           dplyr::select( -sasdate ) %>%
+           dplyr::select( -list2remove ) 
+
+
+### group variables by transformation
+seq.trfm = info.trfm %>% t %>% as.vector %>% unique %>% sort
+
+list.trfm = lapply( seq.trfm, function( i ) { 
+  info.trfm[ which( info.trfm == i ) ] %>% names
+}) %>% set_names( paste0( "trfm=", seq.trfm ) )
+
+
+tsdb = db %>% ts( ., start = c( year( .$date[1] ), quarter( .$date[1]) ), frequency = 4 )
+
+# Variable names with group name attached: for balanced db
+# if: "2018-12.csv"  WHERE DID THE GROUP ASSIGNMENT COME FROM?!
+info.group <- c( 1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	1,	2,	2,	2,	2,	2,	2,	2,	2,	2,	2,	2,	2,	2,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	3,	4,	4,	4,	4,	4,	4,	4,	5,	5,	5,	5,	5,	5,	5,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	7,	7,	7,	7,	7,	7,	7,	7,	7,	7,	7,	7,	7,	8,	8,	8,	8,	8,	8,	8,	8,	8,	8,	8,	8,	8,	8,	9,	9,	9,	9,	9,	9,	9,	9,	9,	9,	9,	9,	10,	10,	10,	10,	10,	10,	10,	10,	13,	4,	4,	4,	11,	11,	11,	11,	11,	11,	12,	12,	1,	1,	14,	14,	2,	2,	2,	3,	3,	9,	9,	8,	8,	8,	8,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	6,	7,	9,	9,	9,	3,	3,	5,	5,	10,	8,	8,	4,	4,	4,	4,	13,	13,	6,	14,	14,	14,	14,	14,	14,	14,	14,	14,	14,	14,	13,	13,	13,	13) %>% 
+  set_names( names(db_ragged)[ -which( names(db_ragged) %in% c( "date","quarter", "year" ) ) ] ) %>%
+  .[ setdiff( names( . ), list2remove ) ] ### remove variables with NA either in the beg/end of the db_ragged
+
+length( info.group )
+
+seq.group = info.group %>% unique %>% sort
+
+list.group = lapply( seq.group, function( i ) { 
+  info.group[ which( info.group == i ) ] %>% names
+}) %>% set_names( paste0( "group=", seq.group ) )
+
+```
+
+```{r data_trfm, include=FALSE}
+###
+### VARIABLE TRANSFORMATION (applied to raw data, incl. 1959)
+###
+
+### create transformed x matrix: 
+### NB! trfm = 7 is not applied as "Original NONBORRES" looks odd
+
+dbx = db %>% 
+  mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(      .   -      lag( . , n = 1 )   ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs( log( . ) - log( lag( . , n = 1 ) ) ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( log( . ) - log( lag( . , n = 1 ) ) -  
+                                                     ( log( lag( . , n = 1 ) ) - log( lag( . , n = 2 ) ) ) ) ) 
+dbyh1 = dbx
+
+dbyh2 = db %>% 
+  mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 2 )   ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 2 ) ) ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 2 ) ) ) / 2 - 
+                                                       ( log( lag( . , n = 2 ) ) - log( lag( . , n = 3 ) ) ) ) ) 
+dbyh4 = db %>% 
+  mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 4 )   ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 4 ) ) ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 4 ) ) ) / 4 - 
+                                                       ( log( lag( . , n = 4 ) ) - log( lag( . , n = 5 ) ) ) ) ) 
+
+dbyh8 = db %>% 
+  mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 8 )   ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 8 ) ) ) ) %>%
+  mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 8 ) ) ) / 8 - 
+                                                       ( log( lag( . , n = 8 ) ) - log( lag( . , n = 9 ) ) ) ) ) 
+
+
+plot( dbyh1$PCECTPI, type = "l" )
+plot( dbyh2$PCECTPI, type = "l" )
+plot( dbyh4$PCECTPI, type = "l" )
+plot( dbyh8$PCECTPI, type = "l" )
+
+dim( dbx )
+
+
+```
+
+There are `r dim(dbx)[2]` columns in the balanced data panel. Observe that the total number of indicators is obtained by subtracting the number of columns with the timestamps: `r colnames(dbx) %>% head`. The balanced sample is `r opt$date_beg_text` - `r opt$date_end_text`. The common factors are extracted from `r length(list.fctr)` indicators.
+
+
+```{r data_trfm_, include=FALSE}
+###
+
+  
+  
+
+```
