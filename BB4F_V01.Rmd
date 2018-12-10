@@ -50,7 +50,11 @@ opt$date_end = c(2018,2) %>% set_names( c("year","quarter") )
 opt$date_beg_text = sprintf( "%sQ%s", opt$date_beg["year"], opt$date_beg["quarter"] )
 opt$date_end_text = sprintf( "%sQ%s", opt$date_end["year"], opt$date_end["quarter"] )
 
-#opt$FREDXLSX <- "2018-12.xlsx"
+opt$date_beg_date = sprintf( "%s-%s-01", opt$date_beg["year"], opt$date_beg["quarter"] * 3 ) %>% as.Date
+opt$date_end_date = sprintf( "%s-%s-01", opt$date_end["year"], opt$date_end["quarter"] * 3 ) %>% as.Date
+
+opt$npca = 5
+#opt$FREDXLSX <- "2018-12.xlsx
 
 ```
 
@@ -98,7 +102,9 @@ list2remove_NA_END = db_ragged %>%
 list2remove = union( list2remove_NA_BEG, list2remove_NA_END ) %>% c( . , "NONBORRES" ) %>% unique
 
 ### create balanced data set
-db = db_ragged %>% dplyr::select( -list2remove ); dim( db )
+db = db_ragged %>% dplyr::select( -list2remove ) %>%
+     filter( date >= opt$date_beg_date )  %>%
+     filter( date <= opt$date_end_date ); dim( db )
 
 names( db )
 
@@ -181,16 +187,95 @@ plot( dbyh8$PCECTPI, type = "l" )
 
 dim( dbx )
 
+```
 
+```{r plot_GDPC1, include=T}
+plot( dbyh1$GDPC1, type = "l",main = "GDPC1" )
+plot( dbyh2$GDPC1, type = "l",main = "GDPC1" )
+plot( dbyh4$GDPC1, type = "l",main = "GDPC1" )
+plot( dbyh8$GDPC1, type = "l",main = "GDPC1" )
 ```
 
 There are `r dim(dbx)[2]` columns in the balanced data panel. Observe that the total number of indicators is obtained by subtracting the number of columns with the timestamps: `r colnames(dbx) %>% head`. The balanced sample is `r opt$date_beg_text` - `r opt$date_end_text`. The common factors are extracted from `r length(list.fctr)` indicators.
 
 
-```{r data_trfm_, include=FALSE}
-###
+```{r test, include=FALSE}
+func_date2vec_m2q <- function( date ) return( c( year( date ), quarter( date ) ) )
+func_vec2date_q2m <- function( vec  ) return( as.Date( sprintf( "%s-%s-01", vec["year"], vec["quarter"] * 3 ) ) )
 
+#func_function 
+
+estn.end = c( 2018, 2 )
+ih = 8
+sz = "PCDGx" # "GDPC1" #  
+
+if( ih == 1 ) dby.in = dbyh1 
+if( ih == 2 ) dby.in = dbyh2 
+if( ih == 4 ) dby.in = dbyh4 
+if( ih == 8 ) dby.in = dbyh8 
+
+dby = dby.in %>% select( date, sz )
+
+### set timing of the exercise
+wndw = list()
+wndw$h = ih
+wndw$estn.end      = estn.end %>% set_names( c("year","quarter") )
+wndw$estn.end.date = func_vec2date_q2m( wndw$estn.end )
+wndw$fcst.tgt.date = wndw$estn.end.date + months( 3 * wndw$h )
+wndw$fcst.tgt      = func_date2vec_m2q( wndw$fcst.tgt.date )
+
+### do PCA 
+
+# remove sz from set of variables to do PCA
+as.fctr = setdiff( colnames( list.fctr ), sz ) 
+
+dbx.in = dbx %>% filter( date <= wndw$estn.end.date ) %>% na.omit 
+
+### select the start date
+wndw$estn.beg.date = dbx.in %>% select( date ) %>% top_n( -1 ) %>% pull( 1 )
+wndw$estn.beg      = func_date2vec_m2q( wndw$estn.beg.date )
+
+### keep all extracted prcomp
+pca.obj = dbx.in %>% 
+           select( -sz ) %>%
+           select( as.fctr ) %>% 
+           prcomp( ., scale. = TRUE)
+
+### keep first of eigenvalues
+sdev = pca.obj$sdev %>% head
+
+pca.slct = pca.obj$x[,1:opt$npca]
+
+### lag pca h-steps ahead: lost last h rows
+tspca.estn_h = pca.slct %>% as.tibble %>%
+               mutate_all( .funs = funs( lag( . , n = wndw$h ) ) ) %>%
+               ts( ., start = wndw$estn.beg, frequency = 4 ) 
+
+### set the last row in pca.slct as input for forecasting of the target quarter
+tspca.fcst_h = pca.slct %>% as.tibble %>% tail(1) %>%
+               ts( ., start = wndw$fcst.tgt, frequency = 4 )
+
+### get dependent variable
+tsy.estn = dby %>% 
+           filter( date >= wndw$estn.beg.date ) %>%
+           filter( date <= wndw$estn.end.date ) %>%
+           select( -date ) %>%
+           ts( ., start = wndw$estn.beg, frequency = 4 )
+
+data.estn = cbind( tsy.estn, tspca.estn_h ) %>%
+            magrittr::set_colnames( c("tsy", colnames( tspca.estn_h ) ) ) %>% 
+            na.omit
+
+ols.formula = as.formula( paste( colnames(data.estn)[1], paste( colnames(data.estn)[-1], collapse = "+" ), sep = "~" ) )
+
+ols = lm( ols.formula, data = data.estn )
+summary( ols ) 
+
+ols.fcst = predict( ols, tspca.fcst_h )
   
-  
+ols.actl = data.estn[,"tsy"]
+ols.fitd = ols$fitted.values %>% ts( ., start = start( data.estn ), frequency = 4 )
+
+plot( ols.actl, lwd = 2 ); lines( ols.fitd, lwd = 2, col = 2 )
 
 ```
