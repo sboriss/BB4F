@@ -26,6 +26,8 @@ library(dplyr)
 library(tidyr)
 library(readxl)
 library(readr)
+library(magrittr)
+library(timetk)
 ```
 
 ```{r path, include=FALSE}
@@ -54,6 +56,7 @@ opt$date_beg_date = sprintf( "%s-%s-01", opt$date_beg["year"], opt$date_beg["qua
 opt$date_end_date = sprintf( "%s-%s-01", opt$date_end["year"], opt$date_end["quarter"] * 3 ) %>% as.Date
 
 opt$npca = 5
+opt$nAR  = 4
 #opt$FREDXLSX <- "2018-12.xlsx
 
 ```
@@ -160,40 +163,44 @@ dbx = db %>%
   mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs( log( . ) - log( lag( . , n = 1 ) ) ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( log( . ) - log( lag( . , n = 1 ) ) -  
                                                      ( log( lag( . , n = 1 ) ) - log( lag( . , n = 2 ) ) ) ) ) 
-dbyh1 = dbx
 
-dbyh2 = db %>% 
+### collect the dependent variable in one list for all h
+list_dby = list()
+
+list_dby$h1 = dbx
+
+list_dby$h2 = db %>% 
   mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 2 )   ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 2 ) ) ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 2 ) ) ) / 2 - 
                                                        ( log( lag( . , n = 2 ) ) - log( lag( . , n = 3 ) ) ) ) ) 
-dbyh4 = db %>% 
+list_dby$h4 = db %>% 
   mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 4 )   ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 4 ) ) ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 4 ) ) ) / 4 - 
                                                        ( log( lag( . , n = 4 ) ) - log( lag( . , n = 5 ) ) ) ) ) 
 
-dbyh8 = db %>% 
+list_dby$h8 = db %>% 
   mutate_at( .vars = list.trfm$`trfm=2`, .funs = funs(        .   -      lag( . , n = 8 )   ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=5`, .funs = funs(   log( . ) - log( lag( . , n = 8 ) ) ) ) %>%
   mutate_at( .vars = list.trfm$`trfm=6`, .funs = funs( ( log( . ) - log( lag( . , n = 8 ) ) ) / 8 - 
                                                        ( log( lag( . , n = 8 ) ) - log( lag( . , n = 9 ) ) ) ) ) 
 
 
-plot( dbyh1$PCECTPI, type = "l" )
-plot( dbyh2$PCECTPI, type = "l" )
-plot( dbyh4$PCECTPI, type = "l" )
-plot( dbyh8$PCECTPI, type = "l" )
+plot( list_dby$h1$PCECTPI, type = "l",main = "PCECTPI" )
+plot( list_dby$h2$PCECTPI, type = "l",main = "PCECTPI" )
+plot( list_dby$h4$PCECTPI, type = "l",main = "PCECTPI" )
+plot( list_dby$h8$PCECTPI, type = "l",main = "PCECTPI" )
 
 dim( dbx )
 
 ```
 
 ```{r plot_GDPC1, include=T}
-plot( dbyh1$GDPC1, type = "l",main = "GDPC1" )
-plot( dbyh2$GDPC1, type = "l",main = "GDPC1" )
-plot( dbyh4$GDPC1, type = "l",main = "GDPC1" )
-plot( dbyh8$GDPC1, type = "l",main = "GDPC1" )
+plot( list_dby$h1$GDPC1, type = "l",main = "GDPC1" )
+plot( list_dby$h2$GDPC1, type = "l",main = "GDPC1" )
+plot( list_dby$h4$GDPC1, type = "l",main = "GDPC1" )
+plot( list_dby$h8$GDPC1, type = "l",main = "GDPC1" )
 ```
 
 There are `r dim(dbx)[2]` columns in the balanced data panel. Observe that the total number of indicators is obtained by subtracting the number of columns with the timestamps: `r colnames(dbx) %>% head`. The balanced sample is `r opt$date_beg_text` - `r opt$date_end_text`. The common factors are extracted from `r length(list.fctr)` indicators.
@@ -203,18 +210,11 @@ There are `r dim(dbx)[2]` columns in the balanced data panel. Observe that the t
 func_date2vec_m2q <- function( date ) return( c( year( date ), quarter( date ) ) )
 func_vec2date_q2m <- function( vec  ) return( as.Date( sprintf( "%s-%s-01", vec["year"], vec["quarter"] * 3 ) ) )
 
-#func_function 
+func_doFcst = function( sz, ih, estn.end ){ 
 
-estn.end = c( 2018, 2 )
-ih = 8
-sz = "PCDGx" # "GDPC1" #  
-
-if( ih == 1 ) dby.in = dbyh1 
-if( ih == 2 ) dby.in = dbyh2 
-if( ih == 4 ) dby.in = dbyh4 
-if( ih == 8 ) dby.in = dbyh8 
-
-dby = dby.in %>% select( date, sz )
+#estn.end = c( 2016, 2 ) # c( 1984, 4 ),
+#ih = 1
+#sz = "GDPC1" #"PCDGx" #   
 
 ### set timing of the exercise
 wndw = list()
@@ -224,6 +224,32 @@ wndw$estn.end.date = func_vec2date_q2m( wndw$estn.end )
 wndw$fcst.tgt.date = wndw$estn.end.date + months( 3 * wndw$h )
 wndw$fcst.tgt      = func_date2vec_m2q( wndw$fcst.tgt.date )
 
+
+dby = list_dby[[ paste0("h",wndw$h)]] %>% select( date, sz )
+
+
+### create AR terms of the dependent variable
+dby_lag = list_dby[[ "h1" ]] %>% select( date, sz ) %>%
+          mutate_at( .vars = sz, .funs = funs( `_hplus0` = lag( . , n = wndw$h     ) ) ) %>%
+          mutate_at( .vars = sz, .funs = funs( `_hplus1` = lag( . , n = wndw$h + 1 ) ) ) %>%
+          mutate_at( .vars = sz, .funs = funs( `_hplus2` = lag( . , n = wndw$h + 2 ) ) ) %>%
+          mutate_at( .vars = sz, .funs = funs( `_hplus3` = lag( . , n = wndw$h + 3 ) ) ) %>%
+          select( -sz ) %>%
+          set_colnames( c("date", paste0( sz, "_", seq(wndw$h, wndw$h + 3 ) ) ) ) %>%
+          select( date, paste0( sz, "_", seq(wndw$h, wndw$h + (opt$nAR - 1 ) ) ) )
+
+dby_lag.beg.date = dby_lag %>% select( date ) %>% top_n( -1 ) %>% pull( 1 )
+dby_lag.beg      = func_date2vec_m2q( dby_lag.beg.date )
+
+tsy_lag.estn = dby_lag %>%
+               filter( date <= wndw$estn.end.date ) %>%
+               select( -date ) %>%
+               ts( ., start = dby_lag.beg, frequency = 4 )
+
+tsy_lag.fcst = dby_lag %>%
+               filter( date == wndw$fcst.tgt.date ) %>%
+               select( -date ) %>%
+               ts( ., start = wndw$fcst.tgt, frequency = 4 )
 ### do PCA 
 
 # remove sz from set of variables to do PCA
@@ -232,50 +258,116 @@ as.fctr = setdiff( colnames( list.fctr ), sz )
 dbx.in = dbx %>% filter( date <= wndw$estn.end.date ) %>% na.omit 
 
 ### select the start date
-wndw$estn.beg.date = dbx.in %>% select( date ) %>% top_n( -1 ) %>% pull( 1 )
-wndw$estn.beg      = func_date2vec_m2q( wndw$estn.beg.date )
+dbx.in.beg.date = dbx.in %>% select( date ) %>% top_n( -1 ) %>% pull( 1 )
+dbx.in.beg      = func_date2vec_m2q( dbx.in.beg.date )
 
 ### keep all extracted prcomp
 pca.obj = dbx.in %>% 
-           select( -sz ) %>%
-           select( as.fctr ) %>% 
-           prcomp( ., scale. = TRUE)
+          select( as.fctr ) %>% 
+          prcomp( ., scale. = TRUE)
 
 ### keep first of eigenvalues
 sdev = pca.obj$sdev %>% head
 
 pca.slct = pca.obj$x[,1:opt$npca]
 
-### lag pca h-steps ahead: lost last h rows
+colnames( pca.slct )
+### lag pca h-steps ahead: lost first h rows
 tspca.estn_h = pca.slct %>% as.tibble %>%
-               mutate_all( .funs = funs( lag( . , n = wndw$h ) ) ) %>%
-               ts( ., start = wndw$estn.beg, frequency = 4 ) 
+               mutate_all( .funs = funs( lag( . , n = wndw$h ) ) ) %>% 
+               set_names( paste0( colnames( . ),"_", wndw$h) ) %>% 
+               ts( ., start = dbx.in.beg, frequency = 4 ) 
 
 ### set the last row in pca.slct as input for forecasting of the target quarter
 tspca.fcst_h = pca.slct %>% as.tibble %>% tail(1) %>%
+               set_names( paste0( colnames( . ),"_", wndw$h) ) %>% 
                ts( ., start = wndw$fcst.tgt, frequency = 4 )
 
 ### get dependent variable
+tsy.estn.beg.date =  dby %>% select( date ) %>% top_n( -1 ) %>% pull( 1 )
+
 tsy.estn = dby %>% 
-           filter( date >= wndw$estn.beg.date ) %>%
            filter( date <= wndw$estn.end.date ) %>%
            select( -date ) %>%
-           ts( ., start = wndw$estn.beg, frequency = 4 )
+           ts( ., start = func_date2vec_m2q( tsy.estn.beg.date ), frequency = 4 )
 
-data.estn = cbind( tsy.estn, tspca.estn_h ) %>%
-            magrittr::set_colnames( c("tsy", colnames( tspca.estn_h ) ) ) %>% 
+data.estn = cbind( tsy.estn, tspca.estn_h, tsy_lag.estn ) %>%
+            magrittr::set_colnames( c( sz, colnames( tspca.estn_h ), colnames( tsy_lag.estn ) ) ) %>% 
             na.omit
 
-ols.formula = as.formula( paste( colnames(data.estn)[1], paste( colnames(data.estn)[-1], collapse = "+" ), sep = "~" ) )
+formula.ardl = as.formula( paste( colnames(data.estn)[1], paste( colnames(data.estn)[-1], collapse = "+" ), sep = "~" ) )
+formula.ar   = as.formula( paste( colnames(data.estn)[1], paste( colnames( tsy_lag.estn ), collapse = "+" ), sep = "~" ) )
+formula.hm   = as.formula( paste( colnames(data.estn)[1], "~ 1" ) )
 
-ols = lm( ols.formula, data = data.estn )
-summary( ols ) 
 
-ols.fcst = predict( ols, tspca.fcst_h )
+ols.ardl = lm( formula.ardl, data = data.estn )
+ols.ar   = lm( formula.ar  , data = data.estn )
+ols.hm   = lm( formula.hm , data = data.estn )
+
+summary( ols.ardl ) 
+summary( ols.ar ) 
+summary( ols.hm ) 
+
+ardl.fcst = predict( ols.ardl, cbind( tspca.fcst_h, tsy_lag.fcst ) %>% 
+                      magrittr::set_colnames( c( colnames( tspca.estn_h ), colnames( tsy_lag.estn ) ) ) ) %>% 
+            ts( ., start = wndw$fcst.tgt, frequency = 4 )
+
+ar.fcst   = predict( ols.ar  , cbind( tsy_lag.fcst ) %>% 
+                      magrittr::set_colnames( colnames( tsy_lag.estn ) ) ) %>% 
+            ts( ., start = wndw$fcst.tgt, frequency = 4 )
+
+hm.fcst   = ols.hm$coefficients %>% ts( ., start = wndw$fcst.tgt, frequency = 4 )
+
   
-ols.actl = data.estn[,"tsy"]
-ols.fitd = ols$fitted.values %>% ts( ., start = start( data.estn ), frequency = 4 )
+data.actl = data.estn[, sz ]
+ols.ardl.fitd = ols.ardl$fitted.values %>% ts( ., start = start( data.estn ), frequency = 4 )
+ols.ar.fitd   = ols.ar$fitted.values   %>% ts( ., start = start( data.estn ), frequency = 4 )
+ols.hm.fitd   = ols.hm$fitted.values   %>% ts( ., start = start( data.estn ), frequency = 4 )
 
-plot( ols.actl, lwd = 2 ); lines( ols.fitd, lwd = 2, col = 2 )
+
+plot( data.actl, lwd = 2, main = paste( sz, ": h =", wndw$h ) ); 
+lines( ols.ardl.fitd, lwd = 2, col = 2 )
+lines( ols.ar.fitd  , lwd = 2, col = 4 )
+lines( ols.hm.fitd  , lwd = 2, col = 3 )
+
+list_ud = list( ardl.fcst = ardl.fcst, ar.fcst = ar.fcst, hm.fcst = hm.fcst )
+return( list_ud )
+}
+
+#estn.end = c( 1984, 4 ); ih = 1; sz = "GDPC1" #"PCDGx" #  
+
+list_estn.end = seq( as.Date( "1984-12-01"), as.Date( "2018-3-01"), by = "3 months" ) %>%
+                lapply( ., function(x) func_date2vec_m2q( x ) )
+
+estn.end = c( 1984, 4 ); ih = 1; sz = "GDPC1"
+list.model.fcst = lapply( list_estn.end, function(date) func_doFcst( sz, ih, date ) )
+
+### collect oos forecasts
+ts.ardl.fcst = do.call( "rbind", lapply( list.model.fcst, `[[`, "ardl.fcst" ) ) %>% 
+                                 ts( ., start = start(list.model.fcst[[1]]$`ardl.fcst`), frequency = 4 )
+
+ts.ar.fcst   = do.call( "rbind", lapply( list.model.fcst, `[[`, "ar.fcst" ) ) %>% 
+                                 ts( ., start = start(list.model.fcst[[1]]$`ar.fcst`), frequency = 4 )
+
+
+ts.hm.fcst   = do.call( "rbind", lapply( list.model.fcst, `[[`, "hm.fcst" ) ) %>% 
+                                 ts( ., start = start(list.model.fcst[[1]]$`hm.fcst`), frequency = 4 )
+
+mts.fcst = cbind( ts.ardl.fcst, ts.ar.fcst, ts.hm.fcst )
+
+ts.actl = list_dby[[ paste0("h",ih)]] %>% select( date, sz ) %>%
+          filter( date >= func_vec2date_q2m( start( mts.fcst ) %>% set_names( c( "year","quarter" ) ) ) ) %>%
+          filter( date <= func_vec2date_q2m( end(   mts.fcst ) %>% set_names( c( "year","quarter" ) ) ) ) %>%
+          select( -date ) %>%
+          ts( . , start = start( mts.fcst ), frequency = 4 )
+
+cbind( ts.actl, mts.fcst ) %>% tk_tbl() %>% 
+  mutate( erro.ardl = ts.actl - mts.fcst.ts.ardl.fcst ) %>% 
+  mutate( erro.ar   = ts.actl - mts.fcst.ts.ar.fcst   ) %>% 
+  mutate( erro.hm   = ts.actl - mts.fcst.ts.hm.fcst   ) %>% 
+  mutate( ardl.rmsfe = sqrt( mean( ( erro.ardl )^2 ) ) ) %>%
+  mutate( ar.rmsfe   = sqrt( mean( ( erro.ar   )^2 ) ) ) %>%
+  mutate( hm.rmsfe   = sqrt( mean( ( erro.hm   )^2 ) ) )
+ 
 
 ```
